@@ -1,4 +1,4 @@
-#Makefile for la5
+#Makefile for dijkstra-bellman-ford simulation
 default: dvrouter.class lsrouter.class
 
 #dvrouter
