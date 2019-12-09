@@ -20,7 +20,7 @@ class OutputComparator {
       boolean filesMatch = true;
       for (int i = 0; i < file1Lines.size(); i++) {
         if (!file1Lines.get(i).equals(file2Lines.get(i))) {
-          System.out.println(file1Lines.get(i)+" - "+file2Lines.get(i)+" - at line "+i);
+          System.out.println(file1Lines.get(i) + " - " + file2Lines.get(i) + " - at line " + i);
           filesMatch = false;
           break;
         }

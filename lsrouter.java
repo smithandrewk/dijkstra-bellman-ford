@@ -19,28 +19,50 @@ import java.util.Map;
  * link costs and how that may effect message path.
  */
 public class lsrouter {
-    private static final String BREAK = "------------";
+    // handle printing to file
     private static PrintWriter printWriter;
+    // path to output file
     private static final String OUTPUT_FILE = "output.txt";
 
     public static void main(String[] args) throws FileNotFoundException {
+        // Check for correct number of arguments
         if (!(args.length == 3)) {
             System.out.println("Usage: java lsrouter <topofile> <changesfile> <messagefile>");
             System.exit(0);
         }
+        // init printwriter to output file
         printWriter = new PrintWriter(new FileOutputStream(OUTPUT_FILE));
+        // get initial toppology from file -> initialTopology
         List<Link> initialTopology = AlgorithmUtils.getTopology(args[0]);
+        // get offset (see AlgorithmUtils for explanation)
+        int offset = AlgorithmUtils.getOffset(initialTopology);
+        // get changes file -> changes
         List<Link> changes = AlgorithmUtils.getTopology(args[1]);
-        List<Message> messages = AlgorithmUtils.getMessages(args[2]);
-        int[][] adjacencyMatrix = AlgorithmUtils.getAdjacencyMatrix(initialTopology);
-        printWriter.println(BREAK + "Output Before Changes" + BREAK);
-        printToFile(adjacencyMatrix, messages);
-        for (Link change : changes) {
-            printWriter.println(BREAK + "Output After Change: " + change.getSrc() + " " + change.getDest() + " "
-                    + change.getCost() + BREAK);
-            adjacencyMatrix = AlgorithmUtils.applyChange(adjacencyMatrix, change);
-            printToFile(adjacencyMatrix, messages);
+        // apply offset
+        for (Link link : changes) {
+            link.setSrc(link.getSrc() + (1 - offset));
+            link.setDest(link.getDest() + (1 - offset));
         }
+        // get messages file -> messages
+        List<Message> messages = AlgorithmUtils.getMessages(args[2]);
+        // apply offset
+        for (Message message : messages) {
+            message.setSrc(message.getSrc() + (1 - offset));
+            message.setDest(message.getDest() + (1 - offset));
+        }
+
+        // format initial topology as adjacency matrix
+        int[][] adjacencyMatrix = AlgorithmUtils.getAdjacencyMatrix(initialTopology, offset);
+        // wrapper that handles printing and running Dijkstra
+        runDijkstraAndPrintToFile(adjacencyMatrix, messages, offset);
+        // now re-run for all changes in changes file
+        for (Link change : changes) {
+            // get new topology
+            adjacencyMatrix = AlgorithmUtils.applyChange(adjacencyMatrix, change);
+            // handle printing and run Dijkstra on new topology
+            runDijkstraAndPrintToFile(adjacencyMatrix, messages, offset);
+        }
+        // close stream
         printWriter.close();
     }
 
@@ -50,16 +72,22 @@ public class lsrouter {
      * @param adjacencyMatrix adjacency matrix to run algorithm on
      * @param messages        messages to simulate path with
      */
-    public static void printToFile(int[][] adjacencyMatrix, List<Message> messages) {
+    public static void runDijkstraAndPrintToFile(int[][] adjacencyMatrix, List<Message> messages, int offset) {
+        // Run Dijkstra for every router
         for (int i = 1; i <= adjacencyMatrix.length; i++) {
-            printWriter.println("Forwarding Table for Router " + i);
+            // get 'nprime' list from Dijkstra (actually a tree)
             List<Link> nprime = dijkstra(adjacencyMatrix, i);
+            // get adjacencyMatrix for nearest neighbor tree as a result of Dijkstra from
+            // source i
             int[][] nprimeAdj = AlgorithmUtils.getNPrimeAdjacencyMatrix(nprime);
-            printWriter.println(getForwardingEntries(nprime, nprimeAdj.length));
+            // print forwarding table for this router to output file
+            printWriter.println(getForwardingEntries(nprime, nprimeAdj.length, offset));
         }
-        printWriter.println(BREAK + "Messages" + BREAK);
+        // for each message in message file
         for (Message message : messages) {
-            printWriter.println(getMessageEntry(adjacencyMatrix, message));
+            // simulate sending each message and print hops to output file
+            // System.out.println("--------------messages--------------");
+            printWriter.println(getMessageEntry(adjacencyMatrix, message, offset));
         }
     }
 
@@ -68,33 +96,49 @@ public class lsrouter {
      * 
      * @param a   adjacency matrix of network topology
      * @param msg message to send
-     * @return formatted string to output
+     * @return string formatted as “from <x> to <y>: hops <hop1> <hop2> <...>;
+     *         message: <message>”
      */
-    public static String getMessageEntry(int[][] a, Message msg) {
+    public static String getMessageEntry(int[][] a, Message msg, int offset) {
+        // container for string to return
         String ret = "";
+        // shortest path from message src to all reachable nodes
         List<Link> nprime = dijkstra(a, msg.getSrc());
+        // Destination link for message
+        // Used for hopping in reverse direction from destination to soure
         Link destLink = null;
+        // To hold hops for message path (will be in reverse direction at first)
         List<Integer> hops = new ArrayList<Integer>();
+        // for each link in the shortest path tree from message source
         for (Link link : nprime) {
+            // looking for destination in nprime
+            // because msg is in human form (first node is 1)
             if (link.getDest() == msg.getDest() - 1) {
+                // set dest link
                 destLink = link;
-                hops.add(destLink.getDest());
+                // add to hops
+                hops.add(destLink.getDest() - (1 - offset));
             }
         }
+        // hop from destination in reverse order to source
         while (destLink.getSrc() != (msg.getSrc() - 1)) {
+            // check every link in shortest path tree
             for (Link link : nprime) {
+                // if link is source of current dest link, hop
                 if (link.getDest() == destLink.getSrc()) {
                     destLink = link;
-                    hops.add(destLink.getDest());
+                    hops.add(destLink.getDest() - (1 - offset));
                 }
             }
         }
-        hops.add(msg.getSrc() - 1);
-        ret = ret + "from <" + msg.getSrc() + "> to <" + msg.getDest() + ">: hops";
+        // add the source (human readable form)
+        hops.add(msg.getSrc() - 1 - (1 - offset));
+        // string format and return
+        ret = ret + "from " + (msg.getSrc() - (1 - offset)) + " to " + (msg.getDest() - (1 - offset)) + ": hops";
         for (int i = 0; i < hops.size(); i++) {
-            ret = ret + " <" + (hops.get(hops.size() - i - 1) + 1) + ">";
+            ret = ret + " " + (hops.get(hops.size() - i - 1) + 1) + "";
         }
-        ret = ret + "; message: <" + msg.getMsg() + ">\n";
+        ret = ret + "; message: " + msg.getMsg() + "\n";
         return ret;
     }
 
@@ -105,10 +149,11 @@ public class lsrouter {
      * @param numberOfNodes number of nodes in network
      * @return formatted forwarding tables to output to file
      */
-    public static String getForwardingEntries(List<Link> nprime, int numberOfNodes) {
+    public static String getForwardingEntries(List<Link> nprime, int numberOfNodes, int offset) {
         String ret = "";
+        // one table for each destination router
         for (int i = 1; i <= numberOfNodes; i++) {
-            ret = ret + getForwardingEntry(nprime, i);
+            ret = ret + getForwardingEntry(nprime, i, offset);
         }
         return ret;
     }
@@ -120,16 +165,20 @@ public class lsrouter {
      * @param destination destination node to find next hop
      * @return formatted string for specific forwarding entry
      */
-    public static String getForwardingEntry(List<Link> nprime, int destination) {
+    public static String getForwardingEntry(List<Link> nprime, int destination, int offset) {
         Link destLink = null;
         int cost = -1;
         int nextHop = -1;
+        // for every link in shortest spanning tree from router
         for (Link link : nprime) {
+            // if dest is dest in human readable
             if (link.getDest() == destination - 1) {
+                // set cost and set dest
                 cost = link.getCost();
                 destLink = link;
             }
         }
+        // find next hop
         while (destLink.getSrc() != (nprime.get(0).getSrc())) {
             for (Link link : nprime) {
                 if (link.getDest() == destLink.getSrc()) {
@@ -139,7 +188,7 @@ public class lsrouter {
         }
         // next hop
         nextHop = destLink.getDest() + 1;
-        return destination + " " + nextHop + " " + cost + "\n";
+        return (destination - (1 - offset)) + " " + (nextHop - (1 - offset)) + " " + cost + "\n";
     }
 
     /**
@@ -194,10 +243,15 @@ public class lsrouter {
             distances.put(i, new Distance(0, 0));
         }
         Link currNode = new Link(source, source, 0);
+        // pop off curr node
         distances.remove(currNode.getSrc());
+        // first in shortest path tree
+
         nprime.add(currNode);
 
+        // for all nodes in graph
         for (Map.Entry<Integer, Distance> entry : distances.entrySet()) {
+            // no edge from curr node to entry
             if (adjacencyMatrix[currNode.getDest()][entry.getKey()] == 0) {
                 continue;
             }
@@ -205,6 +259,12 @@ public class lsrouter {
                     .getCost()) {
                 entry.setValue(new Distance(currNode.getDest(),
                         (adjacencyMatrix[currNode.getDest()][entry.getKey()] + currNode.getCost())));
+            } else if ((adjacencyMatrix[currNode.getDest()][entry.getKey()] + currNode.getCost()) == entry.getValue()
+                    .getCost()) {
+                if (currNode.getDest() < entry.getKey()) {
+                    entry.setValue(new Distance(currNode.getDest(),
+                            (adjacencyMatrix[currNode.getDest()][entry.getKey()] + currNode.getCost())));
+                }
             } else if (entry.getValue().getCost() == 0) {
                 entry.setValue(new Distance(currNode.getDest(),
                         (adjacencyMatrix[currNode.getDest()][entry.getKey()] + currNode.getCost())));
@@ -215,8 +275,10 @@ public class lsrouter {
         while (distances.size() > 0) {
             Link minNode = new Link(0, 0, 0);
             for (Map.Entry<Integer, Distance> entry : distances.entrySet()) {
+                // no edge to this node
                 if (entry.getValue().getCost() == 0) {
                     continue;
+                    // first node with edge
                 } else if (minNode.getCost() == 0) {
                     minNode = new Link(entry.getValue().getThrough(), entry.getKey(), entry.getValue().getCost());
                 } else if ((entry.getValue().getCost()) < minNode.getCost()) {
@@ -228,7 +290,6 @@ public class lsrouter {
             currNode = minNode;
             nprime.add(currNode);
             distances.remove(currNode.getDest());
-
             for (Map.Entry<Integer, Distance> entry : distances.entrySet()) {
                 if (adjacencyMatrix[currNode.getDest()][entry.getKey()] == 0) {
                     continue;
@@ -237,6 +298,12 @@ public class lsrouter {
                         .getCost()) {
                     entry.setValue(new Distance(currNode.getDest(),
                             (adjacencyMatrix[currNode.getDest()][entry.getKey()] + currNode.getCost())));
+                } else if ((adjacencyMatrix[currNode.getDest()][entry.getKey()] + currNode.getCost()) == entry
+                        .getValue().getCost()) {
+                    if (currNode.getDest() < entry.getValue().getThrough()) {
+                        entry.setValue(new Distance(currNode.getDest(),
+                                (adjacencyMatrix[currNode.getDest()][entry.getKey()] + currNode.getCost())));
+                    }
                 } else if (entry.getValue().getCost() == 0) {
                     entry.setValue(new Distance(currNode.getDest(),
                             (adjacencyMatrix[currNode.getDest()][entry.getKey()] + currNode.getCost())));

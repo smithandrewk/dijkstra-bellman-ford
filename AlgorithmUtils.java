@@ -111,7 +111,7 @@ public class AlgorithmUtils {
      * @param l list of Links which represent a network
      * @return adjacency matrix
      */
-    public static int[][] getAdjacencyMatrix(List<Link> l) {
+    public static int[][] getAdjacencyMatrix(List<Link> l, int offset) {
         // Assuming file input is valid
         int numberOfNodes = getNumberOfNodes(l);
         int[][] ret = new int[numberOfNodes][numberOfNodes];
@@ -122,11 +122,37 @@ public class AlgorithmUtils {
             }
         }
         for (Link link : l) {
-            ret[link.getSrc() - 1][link.getDest() - 1] = link.getCost();
-            ret[link.getDest() - 1][link.getSrc() - 1] = link.getCost();
+            ret[link.getSrc() - offset][link.getDest() - offset] = link.getCost();
+            ret[link.getDest() - offset][link.getSrc() - offset] = link.getCost();
 
         }
         return ret;
+    }
+
+    /**
+     * To allow for any type of numbering in the input files. It would be nice to
+     * assume everyone begins numbering nodes at 1, but not everyone is so kind.
+     * 
+     * @param l initial topology to get offset from
+     * @return offset, a number. really the minimum node number.
+     */
+    public static int getOffset(List<Link> l) {
+        int min = -1;
+        for (Link link : l) {
+            if (link.getSrc() < min) {
+                min = link.getSrc();
+            } else if (link.getDest() < min) {
+                min = link.getDest();
+
+            } else if (min == -1) {
+                if (link.getSrc() < link.getDest()) {
+                    min = link.getSrc();
+                } else {
+                    min = link.getDest();
+                }
+            }
+        }
+        return min;
     }
 
     /**

@@ -20,7 +20,6 @@ import java.util.Map;
  * costs and how that may effect message path.
  */
 public class dvrouter {
-    private static final String BREAK = "------------";
     private static PrintWriter printWriter;
     private static final String OUTPUT_FILE = "output.txt";
 
@@ -34,24 +33,33 @@ public class dvrouter {
         printWriter = new PrintWriter(new FileOutputStream(OUTPUT_FILE));
         // get files
         List<Link> initialTopology = AlgorithmUtils.getTopology(args[0]);
+        // To get offset (see AlgorithmUtils for explanation)
+        int offset = AlgorithmUtils.getOffset(initialTopology);
+        // get changes file
         List<Link> changes = AlgorithmUtils.getTopology(args[1]);
+        // apply offset
+        for (Link link : changes) {
+            link.setSrc(link.getSrc() + (1 - offset));
+            link.setDest(link.getDest() + (1 - offset));
+        }
+        // get messages file
         List<Message> messages = AlgorithmUtils.getMessages(args[2]);
+        // apply offset
+        for (Message message : messages) {
+            message.setSrc(message.getSrc() + (1 - offset));
+            message.setDest(message.getDest() + (1 - offset));
+        }
         // initial topology in adjacency matrix format
-        int[][] adjacencyMatrix = AlgorithmUtils.getAdjacencyMatrix(initialTopology);
-        // prettify file
-        printWriter.println(BREAK + "Output Before Changes" + BREAK);
+        int[][] adjacencyMatrix = AlgorithmUtils.getAdjacencyMatrix(initialTopology, offset);
         // Control iteration of forwarding tables and message-simulating for each router
-        printToFile(adjacencyMatrix, messages);
+        printToFile(adjacencyMatrix, messages, offset);
         // An iteration of forwarding tables and message-simulating for each router for
         // each change in the changes file
         for (Link change : changes) {
-            // prettify file
-            printWriter.println(BREAK + "Output After Change: " + change.getSrc() + " " + change.getDest() + " "
-                    + change.getCost() + BREAK);
             // network topology after applying this change
             adjacencyMatrix = AlgorithmUtils.applyChange(adjacencyMatrix, change);
             // actual iteration
-            printToFile(adjacencyMatrix, messages);
+            printToFile(adjacencyMatrix, messages, offset);
         }
         // close stream
         printWriter.close();
@@ -64,9 +72,9 @@ public class dvrouter {
      * @return proprietary format of distance vectors for each node in the network
      */
     public static Map<Integer, List<Distance>> distanceVector(int[][] adjacencyMatrix) {
-
-        // get initial distance vectors
         Map<Integer, List<Distance>> distanceVectors = new HashMap<Integer, List<Distance>>();
+        Map<Integer, List<Distance>> initialDistanceVectors = new HashMap<Integer, List<Distance>>();
+        // to get initial distance vectors
         for (int i = 0; i < adjacencyMatrix.length; i++) {
             List<Distance> vector = new ArrayList<Distance>();
             for (int j = 0; j < adjacencyMatrix.length; j++) {
@@ -78,13 +86,14 @@ public class dvrouter {
                     vector.add(new Distance(j, adjacencyMatrix[i][j]));
                 }
             }
-
             distanceVectors.put(i, vector);
+            initialDistanceVectors.put(i, vector);
         }
-
         boolean change = true;
+        // interate until convergence
         while (change) {
             change = false;
+
             for (int i = 0; i < adjacencyMatrix.length; i++) {
                 List<Distance> newVector = new ArrayList<Distance>();
                 // get adjacent vectors
@@ -113,36 +122,41 @@ public class dvrouter {
                                 temp = distanceVectors.get(temp.getThrough()).get(i);
                             }
                             through = last;
-
+                            // found less expensive route
                         } else if ((distanceVectors.get(integer).get(j).getCost()
                                 + distanceVectors.get(i).get(integer).getCost()) < min) {
+                            // update
                             change = true;
                             min = distanceVectors.get(integer).get(j).getCost()
                                     + distanceVectors.get(i).get(integer).getCost();
                             Distance temp = distanceVectors.get(integer).get(i);
                             int last = integer;
-
                             while (!(i == temp.getThrough())) {
                                 last = temp.getThrough();
                                 temp = distanceVectors.get(temp.getThrough()).get(i);
 
                             }
-
                             through = last;
-
+                            // Tie break condition
+                        } else if ((distanceVectors.get(integer).get(j).getCost()
+                                + initialDistanceVectors.get(i).get(integer).getCost()) == min) {
+                            // need next hop of current path compared to integer
+                            if (integer < through) {
+                                change = true;
+                                through = integer;
+                            }
                         }
                     }
                     newVector.add(new Distance(through, min));
+
                 }
                 // each iteration here
                 distanceVectors.put(i, newVector);
             }
         }
-
         // convergence here
         return distanceVectors;
         // now print messages, apply change, run again
-
     }
 
     /**
@@ -151,23 +165,21 @@ public class dvrouter {
      * @param adjacencyMatrix adjacency matrix to run algorithm on
      * @param messages        messages to simulate path with
      */
-    public static void printToFile(int[][] adjacencyMatrix, List<Message> messages) {
+    public static void printToFile(int[][] adjacencyMatrix, List<Message> messages, int offset) {
 
         Map<Integer, List<Distance>> dv = distanceVector(adjacencyMatrix);
         // each table
         for (Map.Entry<Integer, List<Distance>> entry : dv.entrySet()) {
-            printWriter.println("Forwarding Table for Router " + (entry.getKey() + 1));
-            // table
             String table = "";
             for (int i = 0; i < entry.getValue().size(); i++) {
-                table = table + (i + 1) + " " + (entry.getValue().get(i).getThrough() + 1) + " "
+                table = table + ((i + 1) - (1 - offset)) + " "
+                        + (entry.getValue().get(i).getThrough() + 1 - (1 - offset)) + " "
                         + entry.getValue().get(i).getCost() + "\n";
             }
             printWriter.println(table);
         }
-        printWriter.println(BREAK + "Messages" + BREAK);
         for (Message message : messages) {
-            printWriter.println(getMessageEntry(dv, dv.get(message.getSrc() - 1), message));
+            printWriter.println(getMessageEntry(dv, dv.get(message.getSrc() - 1), message, offset));
         }
     }
 
@@ -181,23 +193,23 @@ public class dvrouter {
      * @return formatted output string for file
      */
     public static String getMessageEntry(Map<Integer, List<Distance>> distanceVectors,
-            List<Distance> distanceVectorOfSource, Message msg) {
+            List<Distance> distanceVectorOfSource, Message msg, int offset) {
         String ret = "";
         List<Integer> hops = new ArrayList<Integer>();
-        hops.add(msg.getSrc());
+        hops.add(msg.getSrc() - (1 - offset));
         Distance temp = distanceVectorOfSource.get(msg.getDest() - 1);
         while (!(temp.getThrough() == (msg.getDest() - 1))) {
-            hops.add(temp.getThrough() + 1);
+            hops.add(temp.getThrough() + 1 - (1 - offset));
             temp = distanceVectors.get(temp.getThrough()).get(msg.getDest() - 1);
 
         }
-        hops.add(msg.getDest());
+        hops.add(msg.getDest() - (1 - offset));
 
-        ret = ret + "from <" + msg.getSrc() + "> to <" + msg.getDest() + ">: hops";
+        ret = ret + "from " + (msg.getSrc() - (1 - offset)) + " to " + (msg.getDest() - (1 - offset)) + ": hops";
         for (int i = 0; i < hops.size(); i++) {
-            ret = ret + " <" + (hops.get(i)) + ">";
+            ret = ret + " " + (hops.get(i)) + "";
         }
-        ret = ret + "; message: <" + msg.getMsg() + ">\n";
+        ret = ret + "; message: " + msg.getMsg() + "\n";
         return ret;
     }
 
@@ -208,8 +220,9 @@ public class dvrouter {
      */
     public static void printDistanceVectors(Map<Integer, List<Distance>> distanceVectors) {
         // print
+        int j = 0;
         for (Map.Entry<Integer, List<Distance>> entry : distanceVectors.entrySet()) {
-            System.out.print("< ");
+            System.out.print((j++) + "< ");
             for (int i = 0; i < entry.getValue().size(); i++) {
                 System.out.print(
                         "( " + entry.getValue().get(i).getCost() + ", " + entry.getValue().get(i).getThrough() + " ) ");
